@@ -118,7 +118,8 @@ class Word():
         # Finds the first-generation ancestor(s) of a word.
         try:
             raw_parent_list = etymdict[language + ": " + self.word]
-        except:
+        except KeyError:
+            logging.debug('No etymology found for word %s in language %s' % (self.word, language))
             raw_parent_list = []
         parent_list = [self.split(parent) for parent in raw_parent_list]
         if self.ignoreAffixes:
@@ -169,55 +170,120 @@ class Word():
         return Word(parts[1].strip(), parts[0])
 
 class Text():
-    """ A container for texts, where we can store things
-    like its lemmas and tokens. """
+    GERMANIC = 'Germanic'
+    LATINATE = 'Latinate'
+    INDOIRANIAN = 'Indo-Iranian'
+    CELTIC = 'Celtic'
+    HELLENIC = 'Hellenic'
+    SEMITIC = 'Semitic'
+    TURKIC = 'Turkic'
+    AUSTRONESIAN = 'Austronesian'
+    BALTOSLAVIC = 'Balto-Slavic'
+    URALIC = 'Uralic'
+    JAPONIC = 'Japonic'
+
+    LANGUAGE_FAMILIES = [
+        GERMANIC,
+        LATINATE,
+        INDOIRANIAN,
+        CELTIC,
+        HELLENIC,
+        SEMITIC,
+        TURKIC,
+        AUSTRONESIAN,
+        BALTOSLAVIC,
+        URALIC,
+        JAPONIC,
+    ]
+
+    LANGUAGE_MAP = {
+        'eng': GERMANIC,
+        'enm': GERMANIC,
+        'ang': GERMANIC,
+        'deu': GERMANIC,
+        'dut': GERMANIC,
+        'nld': GERMANIC,
+        'dum': GERMANIC,
+        'non': GERMANIC,
+        'gml': GERMANIC,
+        'yid': GERMANIC,
+        'swe': GERMANIC,
+        'rme': GERMANIC,
+        'sco': GERMANIC,
+        'isl': GERMANIC,
+        'dan': GERMANIC,
+        'fra': LATINATE,
+        'frm': LATINATE,
+        'fro': LATINATE,
+        'lat': LATINATE,
+        'sap': LATINATE,
+        'xno': LATINATE,
+        'por': LATINATE,
+        'ita': LATINATE,
+        'hin': INDOIRANIAN,
+        'fas': INDOIRANIAN,
+        'gle': CELTIC,
+        'gla': CELTIC,
+        'grc': HELLENIC,
+        'ara': SEMITIC,
+        'heb': SEMITIC,
+        'tur': TURKIC,
+        'tgl': AUSTRONESIAN,
+        'mri': AUSTRONESIAN,
+        'smo': AUSTRONESIAN,
+        'rus': BALTOSLAVIC,
+        'fin': URALIC,
+        'hun': URALIC,
+        'jpn': JAPONIC,
+    }
+
+    IGNORED = 'ignored'
+
     def __init__(self, text, lang='eng', ignoreAffixes=True, ignoreCurrent=True):
+        self._stopwords = None
         self.text = text
         self.lang = lang
-        self.ignoreAffixes = ignoreAffixes
-        self.ignoreCurrent = ignoreCurrent
-        logging.debug('Initializing text with lang %s', lang)
-        if ignoreAffixes:
-            logging.debug('Ignoring affixes.')
-        if ignoreCurrent:
-            logging.debug('Ignoring current language and its middle variants.')
+        self.lemmatizer = WordNetLemmatizer()
+        self._word_objects = []
+        self.annotated_text = {}
+        ignoreAffixes = ignoreAffixes
+        ignoreCurrent = ignoreCurrent
+        tokenized_text = word_tokenize(text)
+        lower_tokens = [w.lower() for w in tokenized_text]
+        valid_words = [word for word in lower_tokens if self.valid_word(word)]
+        pos_words = {x[0]: x for x in pos_tag(set(valid_words))}
+        for word in tokenized_text:
+            lower_word = word.lower()
+            if lower_word in pos_words:
+                lemma = self.lemmatize(pos_words[lower_word]).lower()
+                word_object = Word(
+                    lemma,
+                    lang,
+                    ignoreAffixes=ignoreAffixes,
+                    ignoreCurrent=ignoreCurrent
+                )
+                self._word_objects.append(word_object)
+                self.annotated_text[word] = {
+                    'word': word_object,
+                    'lemma': lemma
+                }
+            else:
+                self.annotated_text[word] = self.IGNORED
 
-    langDict = {'Germanic': ['eng', 'enm', 'ang', 'deu', 'dut', 'nld', 'dum',
-                             'non', 'gml', 'yid', 'swe', 'rme', 'sco', 'isl',
-                             'dan'],
-                'Latinate': ['fra', 'frm', 'fro', 'lat', 'spa', 'xno', 'por',
-                             'ita'],
-                'Indo-Iranian': ['hin', 'fas'],
-                'Celtic': ['gle', 'gla'],
-                'Hellenic': ['grc'],
-                'Semitic': ['ara', 'heb'],
-                'Turkic': ['tur'],
-                'Austronesian': ['tgl', 'mri', 'smo'],
-                'Balto-Slavic': ['rus'],
-                'Uralic': ['fin', 'hun'],
-                'Japonic': ['jpn']}
+    def valid_word(self, word):
+        return word not in punctuation and word.isalpha() and word not in self.stopwords
+
+    def annotate(self):
+        """ Returns an annotated text in HTML format. """
+        return HTMLify(self).html
 
     @property
-    def tokens(self):
-        return word_tokenize(self.text)
+    def stopwords(self):
+        if self._stopwords is None:
+            self._stopwords = self._get_stopwords()
+        return self._stopwords
 
-    # @property
-    # def tokens(self):
-    #     tokenizer = RegexpTokenizer("\b\w+['-]?\b")
-    #     tokenizer = RegexpTokenizer(r"\b\w+['-]?\w+?\b")
-    #     self.spans = tokenizer.word_tokenize(self.text)
-    #     return tokenizer.tokenize(self.text)
-
-    @property
-    def clean_tokens(self, remove_stopwords=True):
-        clean = [token.lower() for token in self.tokens
-                 if token not in punctuation and token.isalpha()]
-        if remove_stopwords:
-            clean = self.remove_stopwords(clean)
-        return clean
-
-    def remove_stopwords(self, tokens):
-        """ Remove stopwords from a list of tokens. """
+    def _get_stopwords(self):
         stop_dict = {
             'dan': 'danish',
             'eng': 'english',
@@ -237,114 +303,80 @@ class Text():
             'fre': 'french',
         }
         if self.lang in stop_dict:
-            stops = stopwords.words(stop_dict[self.lang])
-            return [token for token in tokens if token not in stops]
-        else:
-            return tokens
+            return set(stopwords.words(stop_dict[self.lang]))
+        return set()
 
-    @property
-    def types(self):
-        """ Get types (unique words) from a list of tokens. """
-        return set(self.clean_tokens)
+    def _wordnet_pos(self, treebank_tag):
+        """
+        Translate between treebank tag style and WordNet tag style.
 
-    @property
-    def posTags(self):
-        """ Get POS tags from a list of types. """
-        return pos_tag(self.types)
+        Here, we map the treebank tag to the wordnet tag by taking the
+        first letter of the treebank tag and mapping it to the wordnet tag.
 
-    @property
-    def lemmas(self):
-        """ Get lemmas from a text, if the text is english. """
-        # Don't try to lemmatize non-English texts.
-        if self.lang != 'eng':
-            return self.types
-        lemmatizer = WordNetLemmatizer()
+        Upenn Treebank part-of-speech tags are used by the nltk pos tagger.
+        The possible tags are ennumerated by nltk.help.upenn_tagset().
 
-        def get_wordnet_pos(treebank_tag):
-            """
-            Translate between treebank tag style and WordNet tag style.
+        - Nouns, e.g., are tagged as 'NN', 'NNS', 'NNP', 'NNPS'.
+        - Verbs, e.g., are tagged as 'VB', 'VBD', 'VBG', 'VBN', 'VBP', 'VBZ'.
+        - Adjectives, e.g., are tagged as 'JJ', 'JJR', 'JJS'.
+        - Adverbs, e.g., are tagged as 'RB', 'RBR', 'RBS'.
 
-            Here, we map the treebank tag to the wordnet tag by taking the
-            first letter of the treebank tag and mapping it to the wordnet tag.
+        Wordnet uses a different part-of-speech tagset.
 
-            Upenn Treebank part-of-speech tags are used by the nltk pos tagger.
-            The possible tags are ennumerated by nltk.help.upenn_tagset().
+        - Nouns are 'n'
+        - verbs are 'v'
+        - adjectives are 'a'
+        - adverbs are 'r'.
 
-            - Nouns, e.g., are tagged as 'NN', 'NNS', 'NNP', 'NNPS'.
-            - Verbs, e.g., are tagged as 'VB', 'VBD', 'VBG', 'VBN', 'VBP', 'VBZ'.
-            - Adjectives, e.g., are tagged as 'JJ', 'JJR', 'JJS'.
-            - Adverbs, e.g., are tagged as 'RB', 'RBR', 'RBS'.
+        If the treebank tag is not in the map, we default to 'n' (noun).
+        """
+        treebank_tag = treebank_tag[0]
+        tag_map = {"J": wn.ADJ,
+                   "V": wn.VERB,
+                   "N": wn.NOUN,
+                   "R": wn.ADV}
+        return tag_map.get(treebank_tag, 'n')
 
-            Wordnet uses a different part-of-speech tagset.
+    def lemmatize(self, wordpos):
+        word, pos = wordpos
+        return self.lemmatizer.lemmatize(word, self._wordnet_pos(pos))
 
-            - Nouns are 'n'
-            - verbs are 'v'
-            - adjectives are 'a'
-            - adverbs are 'r'.
-
-            If the treebank tag is not in the map, we default to 'n' (noun).
-            """
-            treebank_tag = treebank_tag[0]
-            tag_map = {"J": wn.ADJ,
-                       "V": wn.VERB,
-                       "N": wn.NOUN,
-                       "R": wn.ADV}
-            return tag_map.get(treebank_tag, 'n')
-
-        return [lemmatizer.lemmatize(word, get_wordnet_pos(pos))
-                  for word, pos in self.posTags]
-
-
-    @property
-    def wordObjects(self):
-        return [Word(token, self.lang, ignoreAffixes=self.ignoreAffixes,
-                     ignoreCurrent=self.ignoreCurrent) for token in self.lemmas]
-
-    def annotate(self):
-        """ Returns an annotated text in HTML format. """
-        html = ""
-        return html
-
-    def showMacroEtym(self):
-        for word in self.wordObjects:
-            print(word, word.parents)
-
-    def getStats(self, pretty=False):
-        stats_list = [word.parent_languages.stats for word in self.wordObjects]
-        stats = {}
-        for item in stats_list:
-            if len(item) > 0:
-                for lang, perc in item.items():
-                    if lang not in stats:
-                        stats[lang] = perc
-                    else:
-                        stats[lang] += perc
-        allPercs = sum(stats.values())
-        for lang, perc in stats.items():
-            stats[lang] = ( perc / allPercs ) * 100
-
-        if pretty:
-            prettyStats = {}
+    def _get_stats(self):
+        if not hasattr(self, '_stats'):
+            stats_list = [word.parent_languages.stats for word in self._word_objects]
+            stats = {}
+            for item in stats_list:
+                if len(item) > 0:
+                    for lang, perc in item.items():
+                        if lang not in stats:
+                            stats[lang] = perc
+                        else:
+                            stats[lang] += perc
+            allPercs = sum(stats.values())
             for lang, perc in stats.items():
-                try:
-                    prettyLang = languages.get(alpha_3=lang).name
-                except:
-                    prettyLang = "Other Language"
-                prettyStats[prettyLang] = round(perc, 2) # rename the key
-            return prettyStats
-        return stats
+                stats[lang] = ( perc / allPercs ) * 100
+            self._stats = stats
+        return self._stats
 
-    def getFamily(self, language):
-        for family, children in self.langDict.items():
-            if language in children:
-                return family
-        return 'Other'
+    def _get_pretty_stats(self):
+        stats = self._get_stats()
+        pretty_stats = {}
+        for lang, perc in stats.items():
+            try:
+                pretty_lang = languages.get(alpha_3=lang).name
+            except:
+                pretty_lang = "Other Language"
+            pretty_stats[pretty_lang] = round(perc, 2)
+        return pretty_stats
 
-    def getFamilyStats(self):
-        stats = self.getStats()
+    def _get_family(self, language):
+        return self.LANGUAGE_MAP.get(language, 'Other')
+
+    def get_family_stats(self):
+        stats = self._get_stats()
         families = {}
         for lang, perc in stats.items():
-            fam = self.getFamily(lang)
+            fam = self._get_family(lang)
             #print( fam, lang, perc) #debugging
             if fam in families:
                 families[fam].append((lang, perc))
@@ -352,8 +384,8 @@ class Text():
                 families[fam] = [(lang, perc)]
         return families
 
-    def compileFamilyStats(self, pad=True):
-        families = self.getFamilyStats()
+    def compile_family_stats(self, pad=True):
+        families = self.get_family_stats()
         totals = {}
         for family, langs in families.items():
             totals[family] = 0
@@ -361,31 +393,112 @@ class Text():
                 totals[family] += lang[1]
         # optionally add language families not represented by the text
         if pad:
-            for fam in self.langDict:
+            for fam in self.LANGUAGE_FAMILIES:
                 if fam not in totals:
                     totals[fam] = 0.0
         return totals
 
     @property
     def stats(self):
-        return self.getStats()
+        return self._get_stats()
 
-    def familyStats(self, pad=True):
-        return self.compileFamilyStats(pad)
+    def family_stats(self, pad=True):
+        return self.compile_family_stats(pad)
 
     @property
-    def prettyStats(self):
-        return self.getStats(pretty=True)
+    def pretty_stats(self):
+        if not hasattr(self, '_pretty_stats'):
+            self._pretty_stats = self._get_pretty_stats()
+        return self._pretty_stats
 
-    def printPrettyStats(self, filename):
-        d = {filename: self.prettyStats}
+    def print_pretty_stats(self, filename):
+        d = {filename: self.pretty_stats}
         df = pd.DataFrame(d)
         print(df)
 
-    def printCSVStats(self, filename):
-        d = {filename: self.prettyStats}
+    def print_CSV_stats(self, filename):
+        d = {filename: self.pretty_stats}
         df = pd.DataFrame(d)
         print(df.to_csv())
+
+
+class HTMLify():
+    HEADER = """
+            <html>
+            <head>
+            <meta charset="utf-8">
+            <style>
+            body {
+                font-family: sans-serif;
+                color: black;
+                margin: 2em auto;
+                max-width: 72em;
+            }
+            .Germanic { color: green; }
+            .Latinate { color: red; }
+            .Indo-Iranian { color: blue; }
+            .Celtic { color: purple; }
+            .Hellenic { color: orange; }
+            .Semitic { color: yellow; }
+            .Turkic { color: pink; }
+            .Austronesian { color: brown; }
+            .Balto-Slavic { color: teal; }
+            .Uralic { color: gray; }
+            .Japonic { color: pink; }
+            </style>
+            </head>
+            <body>
+            <p>Key</p>
+            <ul>
+            <li><span class="Germanic">Green</span> = Germanic</li>
+            <li><span class="Latinate">Red</span> = Latinate</li>
+            <li><span class="Indo-Iranian">Blue</span> = Indo-Iranian</li>
+            <li><span class="Celtic">Purple</span> = Celtic</li>
+            <li><span class="Hellenic">Orange</span> = Hellenic</li>
+            <li><span class="Semitic">Yellow</span> = Semitic</li>
+            <li><span class="Turkic">Pink</span> = Turkic</li>
+            <li><span class="Austronesian">Brown</span> = Austronesian</li>
+            <li><span class="Balto-Slavic">Teal</span> = Balto-Slavic</li>
+            <li><span class="Uralic">Gray</span> = Uralic</li>
+            <li><span class="Japonic">Pink</span> = Japonic</li>
+            <li>Black = Unknown</li>
+            </ul>
+            <p>Text</p>
+    """
+    FOOTER = "</body></html>"
+
+    def __init__(self, text):
+        self.text = text
+        html_body = self._html_body()
+        self.html = self.HEADER + html_body + self.FOOTER
+
+    def _html_body(self):
+        _ = self.text._get_stats()
+        html = ""
+        for line in self.text.text.split("\n"):
+            if not line.strip():
+                html += "<br>"
+            for word in word_tokenize(line):
+                word = word.lower()
+                if word in self.text.annotated_text:
+                    parents = self.text.annotated_text[word]
+                    if parents == self.text.IGNORED:
+                        html += f"<span>{word}</span> "
+                    else:
+                        root = None
+                        if parents['word'].parents:
+                            parent = parents['word'].parents[0]
+                            root = self.text.LANGUAGE_MAP.get(parent.lang)
+                        if root:
+                            html += f"<span class={root}>{word}</span> "
+                        else:
+                            html += f"<span>{word}</span> "
+                else:
+                    html += f"<span>{word}</span> "
+            html += "<br>"
+        return html
+
+
 
 @click.command()
 @click.argument('filenames', nargs=-1, required=True)
@@ -394,7 +507,7 @@ class Text():
 @click.option('--lang', default='eng',
         help="Specify the language of the texts. Use ISO639-3 "\
              "three-letter language code. Default is English.")
-@click.option('--showfamilies', help="A comma-separated list of language "\
+@click.option('--show-families', help="A comma-separated list of language "\
               "families to show, e.g. Latinate,Germanic")
 @click.option('--affixes', is_flag=True, help="Don't ignore affixes. "\
               "Default is to ignore them.")
@@ -404,9 +517,10 @@ class Text():
               "CSV instead of a pretty table.")
 @click.option('--chart', is_flag=True, help="Make a pretty graph of the "\
               "results. For one text, a pie; for multiple, a bar.")
+@click.option('--annotate', is_flag=True, help="Annotate the text with etymological information.")
 @click.option('--verbose', is_flag=True, help="Show debugging messages.")
-def cli(filenames, allstats, lang, showfamilies, affixes,
-        current, csv, chart, verbose):
+def cli(filenames, allstats, lang, show_families, affixes,
+        current, csv, chart, annotate, verbose):
     """
     Analyzes a text(s) for the etymologies of its words, and tallies the words
     by origin language, and origin language family.
@@ -441,15 +555,19 @@ def cli(filenames, allstats, lang, showfamilies, affixes,
 
         t = Text(text, lang, ignoreAffixes, ignoreCurrent)
 
+        if annotate:
+            print(t.annotate())
+            return
+
         if single and allstats and csv:
-            t.printCSVStats(filename)
+            t.print_CSV_stats(filename)
         elif single and allstats:
-            t.printPrettyStats(filename)
+            t.print_pretty_stats(filename)
 
         if chart and single:
-            s = pd.Series(t.familyStats())
-            if showfamilies:
-                famlist = showfamilies.split(',')
+            s = pd.Series(t.family_stats())
+            if show_families:
+                famlist = show_families.split(',')
                 s = s.loc[famlist]
             ax = s.plot(kind='pie', figsize=(6,6))
             ax.set_ylabel('') # Don't write the series name "None" on the left.
@@ -457,8 +575,8 @@ def cli(filenames, allstats, lang, showfamilies, affixes,
             fig.savefig('chart.png')
             print('Chart saved as chart.png.')
 
-        cumulativeStats[filename] = t.familyStats(pad=single)
-        cumulativeAllStats[filename] = t.prettyStats
+        cumulativeStats[filename] = t.family_stats(pad=single)
+        cumulativeAllStats[filename] = t.pretty_stats
 
     df = pd.DataFrame(cumulativeStats)
     df = df.fillna(0)
@@ -466,8 +584,8 @@ def cli(filenames, allstats, lang, showfamilies, affixes,
     dfAll = pd.DataFrame(cumulativeAllStats)
     dfAll = dfAll.fillna(0)
 
-    if showfamilies:
-        famlist = showfamilies.split(',')
+    if show_families:
+        famlist = show_families.split(',')
         df = df.loc[famlist]
 
     if not allstats:
